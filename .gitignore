@@ -14,9 +14,16 @@ dist-ssr
 
 # Environment Variables
 .env
-.env.*
+.env.local
+.env.*.local
 !.env.example
 
+# Test outputs
+coverage/
+test-results/
+playwright-report/
+.playwright/
+*.tsbuildinfo
 
 # Editor directories and files
 .vscode/*
@@ -28,3 +35,21 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# ── Server ────────────────────────────────────────────────────────────────────
+server-nest/.env
+server-nest/.env.local
+server-nest/dist
+server-nest/node_modules
+server-nest/coverage
+
+# ── K8s — never commit real secret values ─────────────────────────────────────
+# The secret.yaml template IS committed (it has placeholder values).
+# If you create a filled version with real keys, name it secret.local.yaml
+# and it will be ignored by this rule.
+k8s/*.local.yaml
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+*.pem
+*.key
+*.cert

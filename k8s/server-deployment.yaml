@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: facialio-server
+  namespace: facialio
+  labels:
+    app: facialio-server
+spec:
+  replicas: 2      # 2 replicas = zero-downtime rolling updates + load distribution
+  selector:
+    matchLabels:
+      app: facialio-server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1         # spin up 1 extra pod during update before killing old ones
+      maxUnavailable: 0   # never have fewer than 2 running during a deploy
+  template:
+    metadata:
+      labels:
+        app: facialio-server
+    spec:
+      containers:
+        - name: facialio-server
+          # Replace with your actual image after pushing to a registry:
+          # docker build -t your-registry/facialio-server:latest ./server-nest
+          # docker push your-registry/facialio-server:latest
+          image: facialio-server:latest
+          imagePullPolicy: IfNotPresent   # use local image in dev, registry in prod
+          ports:
+            - containerPort: 3001    # HTTP API
+              name: http
+          envFrom:
+            # Inject all ConfigMap keys as env vars
+            - configMapRef:
+                name: facialio-config
+            # Inject all Secret keys as env vars
+            - secretRef:
+                name: facialio-secrets
+          env:
+            # Override MONGODB_URI to use the in-cluster mongo service
+            # (comment this out if using MongoDB Atlas — use the secret URI instead)
+            - name: MONGODB_URI
+              value: "mongodb://mongo:27017/facialio"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3001
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3001
+            initialDelaySeconds: 5
+            periodSeconds: 5
+
+---
+# Service — exposes the NestJS server inside the cluster.
+# The Ingress routes external HTTPS traffic to this service.
+# ClusterIP is enough — Ingress handles external access.
+apiVersion: v1
+kind: Service
+metadata:
+  name: facialio-server-svc
+  namespace: facialio
+spec:
+  selector:
+    app: facialio-server
+  ports:
+    - port: 3001
+      targetPort: 3001
+      name: http
+  type: ClusterIP
+
+# ── Interview answer ──────────────────────────────────────────────────────────
+# "The server runs 2 replicas with RollingUpdate strategy — maxUnavailable: 0
+#  means we never serve requests from fewer than 2 pods during a deployment.
+#  Config and secrets are injected via envFrom referencing the ConfigMap and
+#  Secret objects — the container image has zero hardcoded configuration.
+#  The HPA (hpa.yaml) scales this deployment up to 5 replicas under load."

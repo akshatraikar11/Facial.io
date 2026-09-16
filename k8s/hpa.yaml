@@ -1,0 +1,72 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: facialio-server-hpa
+  namespace: facialio
+spec:
+  # Target — which deployment to scale
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: facialio-server
+
+  # Replica bounds
+  minReplicas: 2    # always at least 2 for high availability
+  maxReplicas: 5    # never exceed 5 — cost control
+
+  metrics:
+    # Scale up when average CPU across all pods exceeds 70%
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+    # Scale up when average memory exceeds 80%
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+  behavior:
+    # Scale UP: fast — add pods quickly under load
+    scaleUp:
+      stabilizationWindowSeconds: 30    # wait 30s before scaling up again
+      policies:
+        - type: Pods
+          value: 2                      # add up to 2 pods at a time
+          periodSeconds: 60
+
+    # Scale DOWN: slow — wait 5 minutes before removing pods
+    # Prevents thrashing: scale up → load drops → scale down → load spikes again
+    scaleDown:
+      stabilizationWindowSeconds: 300   # wait 5 min before scaling down
+      policies:
+        - type: Pods
+          value: 1                      # remove only 1 pod at a time
+          periodSeconds: 60
+
+# ── What is an HPA? ─────────────────────────────────────────────────────────
+# HorizontalPodAutoscaler watches CPU/memory metrics and automatically
+# adjusts the replica count of a Deployment within the min/max bounds.
+#
+# How it works:
+#   1. Kubernetes metrics-server collects CPU/memory from every pod
+#   2. HPA controller checks metrics every 15 seconds
+#   3. If average CPU > 70%, it calculates: desiredReplicas = ceil(current * (currentUtil / targetUtil))
+#   4. It patches the Deployment's replica count
+#   5. New pods spin up and start serving traffic
+#
+# Why slow scale-down?
+#   If the server gets a burst of face-recognition requests, we scale up fast.
+#   After the burst, we wait 5 minutes before scaling down — this prevents
+#   the pod count from bouncing up and down if traffic is spiky.
+#
+# Interview answer:
+# "The HPA scales the NestJS server between 2 and 5 replicas based on CPU
+#  and memory. Scale-up is fast (30s stabilization, 2 pods at a time).
+#  Scale-down is conservative (5 min stabilization, 1 pod at a time) to
+#  avoid thrashing under bursty face-recognition workloads."

@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: facialio
+  labels:
+    app.kubernetes.io/name: facialio
+    app.kubernetes.io/managed-by: kubectl
+
+# ── What is a Namespace? ─────────────────────────────────────────────────────
+# A Namespace is a logical partition inside a Kubernetes cluster.
+# All Facial.io resources (pods, services, secrets) live in the 'facialio'
+# namespace — isolated from other apps running on the same cluster.
+#
+# Apply first, before any other manifest:
+#   kubectl apply -f k8s/namespace.yaml
+#
+# Then apply everything else:
+#   kubectl apply -f k8s/
+#
+# Interview answer:
+# "We use a dedicated namespace so all our resources are grouped together,
+#  RBAC policies can be scoped to just this namespace, and kubectl commands
+#  like 'kubectl get pods -n facialio' only show our app's pods."

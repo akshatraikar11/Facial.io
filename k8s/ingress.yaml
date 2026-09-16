@@ -1,0 +1,79 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: facialio-ingress
+  namespace: facialio
+  annotations:
+    # nginx ingress controller — most common in production clusters
+    kubernetes.io/ingress.class: "nginx"
+
+    # Automatic HTTPS via cert-manager (Let's Encrypt — free TLS certificates)
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+
+    # WebSocket support — required for Socket.io
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+
+    # Allow large request bodies for face descriptor payloads (descriptor is ~6KB)
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+
+    # CORS handled by NestJS — don't double-apply at ingress level
+    nginx.ingress.kubernetes.io/enable-cors: "false"
+
+spec:
+  # TLS — cert-manager auto-provisions and renews the certificate
+  tls:
+    - hosts:
+        - facialio.app
+        - api.facialio.app
+      secretName: facialio-tls   # cert-manager stores the cert here
+
+  rules:
+    # ── Frontend ─────────────────────────────────────────────────────────────
+    - host: facialio.app
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: facialio-client-svc
+                port:
+                  number: 80
+
+    # ── Backend API + WebSocket ───────────────────────────────────────────────
+    # All /api/* and Socket.io /attendance namespace traffic goes to the server.
+    - host: api.facialio.app
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: facialio-server-svc
+                port:
+                  number: 3001
+
+# ── What is an Ingress? ──────────────────────────────────────────────────────
+# An Ingress is the single entry point into the cluster from the internet.
+# It reads the Host header of every incoming request and routes it to the
+# correct internal service — like a smart reverse proxy.
+#
+# Without Ingress: every service needs its own LoadBalancer (expensive, 1 IP each)
+# With Ingress:    one LoadBalancer, one IP, routes by hostname/path
+#
+# cert-manager + Let's Encrypt:
+#   cert-manager watches Ingress resources, sees the tls[] spec, and
+#   automatically requests a TLS certificate from Let's Encrypt.
+#   Certificates auto-renew every 90 days. Zero manual cert management.
+#
+# WebSocket (Socket.io):
+#   WebSocket upgrades require the proxy to keep connections alive longer
+#   than the default 60s timeout. The proxy-read-timeout: 3600 annotation
+#   sets a 1-hour timeout so Socket.io connections stay open.
+#
+# Interview answer:
+# "A single nginx Ingress routes traffic to frontend or API based on hostname.
+#  cert-manager provisions free TLS via Let's Encrypt automatically.
+#  The 3600s proxy timeout keeps Socket.io WebSocket connections alive."

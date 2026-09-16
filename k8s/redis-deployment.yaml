@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: facialio
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+              name: redis
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          # Redis persistence with AOF (Append-Only File)
+          command: ["redis-server", "--appendonly", "yes"]
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-pvc
+
+---
+# PersistentVolumeClaim for Redis data persistence
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: facialio
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # storageClassName: standard  # Uncomment and set based on your cluster
+
+---
+# Service — exposes Redis internally within the cluster
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: facialio
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+      name: redis
+  type: ClusterIP
+
+# ── What is Redis used for? ──────────────────────────────────────────────────
+# Redis acts as the shared event bus for Socket.io across multiple NestJS pods.
+#
+# Without Redis (default memory adapter):
+#   - Each pod has its own isolated WebSocket server
+#   - Events emitted from pod 1 don't reach clients on pod 2
+#   - Load balancer must use sticky sessions (defeats horizontal scaling)
+#
+# With Redis adapter:
+#   - All pods connect to Redis as pub/sub broker
+#   - server.to(room).emit() publishes to Redis
+#   - All pods subscribed to that room receive the event
+#   - Each pod broadcasts to its own connected clients
+#
+# Result: True stateless horizontal scaling for WebSocket connections.
+#
+# Why AOF persistence:
+#   AOF (Append-Only File) logs every write operation to disk.
+#   If Redis pod restarts, it replays the AOF to restore state.
+#   For Socket.io, we don't strictly need this (ephemeral rooms),
+#   but it's a good practice for production Redis deployments.
+#
+# Why single replica:
+#   Redis is used as a transient event bus, not durable storage.
+#   A single pod is sufficient for typical load. For high availability,
+#   deploy Redis Sentinel (3+ pods with automatic failover) or use
+#   a managed Redis service (AWS ElastiCache, Google Memorystore).
+#
+# Interview answer:
+# "Redis acts as the Socket.io event bus for multi-pod scaling.
+#  Without it, WebSocket connections are sticky to a single pod.
+#  With Redis, all pods share the same pub/sub channel — events
+#  reach all clients regardless of which pod they're connected to."

@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: facialio-config
+  namespace: facialio
+data:
+  # ── Application ────────────────────────────────────────────────────────────
+  NODE_ENV: "production"
+  PORT: "3001"
+  CLIENT_URL: "https://facialio.app"   # your production domain
+
+  # ── Redis (Socket.io multi-pod adapter) ────────────────────────────────────
+  # Uses in-cluster Redis service for WebSocket event bus
+  REDIS_URL: "redis://redis:6379"
+
+  # ── Pinecone ───────────────────────────────────────────────────────────────
+  PINECONE_INDEX_NAME: "facialio"
+
+# ── What is a ConfigMap? ──────────────────────────────────────────────────────
+# ConfigMaps store non-sensitive configuration as key-value pairs.
+# Pods reference it via envFrom — the keys become environment variables.
+#
+# ConfigMap vs Secret:
+#   ConfigMap  = public config (port numbers, feature flags, URLs)
+#   Secret     = sensitive data (API keys, passwords, connection strings)
+#
+# Never put API keys or passwords here. Those go in k8s/secret.yaml.
+#
+# Interview answer:
+# "We separate config from code. ConfigMaps hold env-specific non-sensitive
+#  settings. Secrets hold credentials. Both are injected as environment
+#  variables at pod startup — the container image has no hardcoded config."

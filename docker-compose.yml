@@ -1,0 +1,75 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Facial.io — Docker Compose (Local Development)
+#
+# Spins up all services with: docker compose up
+#
+# Services:
+#   client   — React 19 + Vite frontend (dev server, hot reload)
+#   server   — NestJS backend (watch mode)
+#   mongo    — MongoDB 7 (data persisted in named volume)
+#
+# Why separate client/server containers vs a single container:
+#   Independent restarts, independent logs, mirrors production topology.
+#   In production, client goes to Vercel and server goes to Render —
+#   two separate deployments. Docker Compose mirrors that locally.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── React Frontend ──────────────────────────────────────────────────────────
+  client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development         # multi-stage: just the dev server stage
+    ports:
+      - "5173:5173"               # Vite default port
+    volumes:
+      - .:/app                    # mount workspace for hot reload
+      - /app/node_modules         # anonymous volume prevents host node_modules overwrite
+    environment:
+      - VITE_API_URL=http://localhost:3001/api
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  # ── NestJS Backend ──────────────────────────────────────────────────────────
+  server:
+    build:
+      context: ./server-nest
+      dockerfile: Dockerfile
+      target: development
+    ports:
+      - "3001:3001"               # API port
+      - "3002:3002"               # Reserved for Socket.io if on separate port
+    volumes:
+      - ./server-nest:/app        # mount for hot reload
+      - /app/node_modules
+    env_file:
+      - ./server-nest/.env        # loads all keys from .env file
+    environment:
+      - NODE_ENV=development
+      - MONGODB_URI=mongodb://mongo:27017/facialio
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── MongoDB ─────────────────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"             # expose for local DB clients (Compass, etc.)
+    volumes:
+      - mongo_data:/data/db       # named volume — data persists across restarts
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+# ── Volumes ──────────────────────────────────────────────────────────────────
+volumes:
+  mongo_data:
+    driver: local
