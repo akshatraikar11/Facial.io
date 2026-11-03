@@ -113,6 +113,11 @@ import { TenantIsolationGuard } from './common/guards/tenant-isolation.guard.js'
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
     },
+    // Multi-tenant organization isolation guard
+    {
+      provide: APP_GUARD,
+      useClass: TenantIsolationGuard,
+    },
   ],
 })
 export class AppModule {}

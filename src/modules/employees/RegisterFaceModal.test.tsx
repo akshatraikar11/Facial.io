@@ -20,6 +20,12 @@ import RegisterFaceModal from './RegisterFaceModal';
 vi.mock('../../utils/faceApi', () => ({
   detectSingleFace: vi.fn(),
   loadModels: vi.fn().mockResolvedValue(undefined),
+  getOptimizedDetectionOptions: vi.fn(),
+}));
+
+// Mock FaceApiContext
+vi.mock('../../components/FaceApiContext', () => ({
+  useFaceApi: () => ({ modelsLoaded: true, loading: false }),
 }));
 
 // Mock api service
@@ -229,6 +235,9 @@ describe('RegisterFaceModal', () => {
   });
 
   it('should disable capture button while processing', async () => {
+    const { detectSingleFace } = await import('../../utils/faceApi');
+    vi.mocked(detectSingleFace).mockImplementationOnce(() => new Promise(() => {}));
+
     const user = userEvent.setup();
     renderModal(true);
 
@@ -236,8 +245,10 @@ describe('RegisterFaceModal', () => {
     await user.type(nameInput, 'John Doe');
 
     const captureButton = screen.getByText(/Capture Face/i);
-    await user.click(captureButton);
+    user.click(captureButton);
 
-    expect(captureButton).toBeDisabled();
+    await waitFor(() => {
+      expect(captureButton).toBeDisabled();
+    });
   });
 });

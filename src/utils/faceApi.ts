@@ -29,3 +29,5 @@ export const loadModels = async (): Promise<boolean> => {
         return false;
     }
 };
+
+export const detectSingleFace = (input: any, options?: any) => faceapi.detectSingleFace(input, options);

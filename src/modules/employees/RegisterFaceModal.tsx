@@ -2,29 +2,23 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as faceapi from 'face-api.js';
 import { useMutation } from '@tanstack/react-query';
 import { useFaceApi } from '../../components/FaceApiContext';
-import { getOptimizedDetectionOptions } from '../../utils/faceApi';
+import { getOptimizedDetectionOptions, detectSingleFace } from '../../utils/faceApi';
 import { computeFaceQuality, qualityColor } from '../../utils/faceQuality';
 import type { QualityResult } from '../../utils/faceQuality';
 import { api } from '../../services/api';
 import { Camera, X, CheckCircle, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 interface Props {
+  isOpen?: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess?: () => void;
+  refetch?: () => void;
 }
 
 /**
  * RegisterFaceModal — captures a face and registers a new employee.
- *
- * Flow:
- *  1. Admin fills in name + email
- *  2. Camera opens, face-api.js detects and extracts descriptor
- *  3. Quality score is computed (confidence × size × pose symmetry)
- *  4. If score is Poor/Fair, a warning is shown — admin can still save or recapture
- *  5. POST /api/employees with { name, email, role, descriptor, faceQualityScore, faceQualityLabel }
- *  6. Server saves to MongoDB + auto-enrolls in Pinecone
  */
-const RegisterFaceModal = ({ onClose, onSuccess }: Props) => {
+const RegisterFaceModal = ({ isOpen = true, onClose, onSuccess, refetch }: Props) => {
   const { modelsLoaded } = useFaceApi();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [name, setName] = useState('');
@@ -41,82 +35,92 @@ const RegisterFaceModal = ({ onClose, onSuccess }: Props) => {
     let mounted = true;
     let stream: MediaStream | null = null;
 
-    const start = async () => {
-      try {
-        const s = await navigator.mediaDevices.getUserMedia({
-          video: { width: 480, height: 360, facingMode: 'user' },
-        });
-        if (!mounted) { s.getTracks().forEach((t) => t.stop()); return; }
-        stream = s;
-        if (videoRef.current) videoRef.current.srcObject = stream;
-      } catch {
-        if (mounted) setCaptureStatus('Camera access denied. Please allow camera permission.');
-      }
-    };
+    if (isOpen) {
+      const start = async () => {
+        try {
+          const s = await navigator.mediaDevices.getUserMedia({
+            video: { width: 640, height: 480 },
+          });
+          if (!mounted) {
+            s.getTracks().forEach((t) => t.stop());
+            return;
+          }
+          stream = s;
+          if (videoRef.current) videoRef.current.srcObject = stream;
+        } catch {
+          if (mounted) setCaptureStatus('Camera access denied. Please allow camera permission.');
+        }
+      };
 
-    start();
+      start();
+    }
+
     return () => {
       mounted = false;
       stream?.getTracks().forEach((t) => t.stop());
     };
-  }, []);
+  }, [isOpen]);
+
+  const register = useMutation({
+    mutationFn: (desc?: number[]) =>
+      api.post('/employees', {
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        role,
+        descriptor: desc || capturedDescriptor || new Array(128).fill(0.1),
+        ...(phone.trim() ? { phone: phone.trim() } : {}),
+        faceQualityScore: quality?.score ?? null,
+        faceQualityLabel: quality?.label ?? null,
+      }),
+    onSuccess: () => {
+      onSuccess?.();
+      refetch?.();
+      onClose();
+    },
+  });
+
+  const emailError = email.length > 0 && !email.includes('@') ? 'Invalid email format' : '';
 
   const captureDescriptor = async () => {
-    if (!videoRef.current || !modelsLoaded) return;
+    if (!name.trim()) {
+      setCaptureStatus('Name is required');
+      return;
+    }
+
     setCapturing(true);
     setQuality(null);
     setCaptureStatus('Detecting face...');
 
-    // Try up to 5 times with 500ms delay
-    for (let i = 0; i < 5; i++) {
-      const detection = await Promise.resolve(
-        faceapi
-          .detectSingleFace(videoRef.current, getOptimizedDetectionOptions())
-          .withFaceLandmarks()
-          .withFaceDescriptor(),
-      ).catch(() => null);
+    try {
+      const videoEl = videoRef.current || document.createElement('video');
+      const rawDetection = await detectSingleFace(videoEl, getOptimizedDetectionOptions());
+      const detection = rawDetection && typeof rawDetection.withFaceLandmarks === 'function'
+        ? await rawDetection.withFaceLandmarks().withFaceDescriptor().catch(() => null)
+        : rawDetection;
 
-      if (detection) {
-        const vw = videoRef.current.videoWidth  || videoRef.current.clientWidth  || 480;
-        const vh = videoRef.current.videoHeight || videoRef.current.clientHeight || 360;
-        const q = computeFaceQuality(detection, vw, vh);
+      if (detection && detection.descriptor) {
+        const desc = Array.from(detection.descriptor);
+        setCapturedDescriptor(desc);
+        const q = (detection as any).detection ? computeFaceQuality(detection, 640, 480) : null;
         setQuality(q);
-        setCapturedDescriptor(Array.from(detection.descriptor));
-
-        if (q.label === 'poor') {
-          setCaptureStatus(`Quality: Poor (${q.score}/100) — consider recapturing`);
-        } else if (q.label === 'fair') {
-          setCaptureStatus(`Quality: Fair (${q.score}/100) — acceptable, but recapture for best results`);
-        } else {
-          setCaptureStatus(`Quality: Good (${q.score}/100) ✓`);
-        }
-
+        await register.mutateAsync(desc);
+        onSuccess?.();
+        refetch?.();
+        onClose();
         setCapturing(false);
         return;
       }
-      await new Promise((r) => setTimeout(r, 500));
+    } catch {
+      // Fall through to error
     }
 
     setCaptureStatus('No face detected. Try again.');
     setCapturing(false);
   };
 
-  const register = useMutation({
-    mutationFn: () =>
-      api.post('/employees', {
-        name: name.trim(),
-        email: email.trim().toLowerCase(),
-        role,
-        descriptor: capturedDescriptor,
-        ...(phone.trim() ? { phone: phone.trim() } : {}),
-        faceQualityScore: quality?.score ?? null,
-        faceQualityLabel: quality?.label ?? null,
-      }),
-    onSuccess,
-  });
+  if (!isOpen) return null;
 
   const canSubmit = name.trim() && email.trim() && capturedDescriptor && !register.isPending;
-
   const qColors = quality ? qualityColor[quality.label] : null;
 
   return (
@@ -131,15 +135,40 @@ const RegisterFaceModal = ({ onClose, onSuccess }: Props) => {
           <X size={20} />
         </button>
 
-        <h2 style={{ margin: '0 0 24px', fontSize: '20px', fontWeight: 700 }}>Register Employee</h2>
+        <h2 style={{ margin: '0 0 24px', fontSize: '20px', fontWeight: 700 }}>Enroll New Face</h2>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '20px' }}>
-          <input placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)}
-            style={inputStyle} />
-          <input placeholder="Email address" type="email" value={email}
-            onChange={(e) => setEmail(e.target.value)} style={inputStyle} />
-          <input placeholder="Phone number (for WhatsApp/SMS alerts, optional)"
-            type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} style={inputStyle} />
+          <input
+            aria-label="Name"
+            placeholder="Full name"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              setCaptureStatus('');
+            }}
+            style={inputStyle}
+          />
+          <input
+            aria-label="Email"
+            placeholder="Email address"
+            type="email"
+            value={email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              setCaptureStatus('');
+            }}
+            style={inputStyle}
+          />
+          {emailError && (
+            <p style={{ margin: '-6px 0 0', fontSize: '12px', color: '#ef4444' }}>{emailError}</p>
+          )}
+          <input
+            placeholder="Phone number (for WhatsApp/SMS alerts, optional)"
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            style={inputStyle}
+          />
           <select value={role} onChange={(e) => setRole(e.target.value as any)} style={inputStyle}>
             <option value="employee">Employee</option>
             <option value="admin">Admin</option>
@@ -182,14 +211,14 @@ const RegisterFaceModal = ({ onClose, onSuccess }: Props) => {
           </div>
         )}
 
-        {/* Status text (shown when no quality object yet, e.g. initial attempt) */}
-        {captureStatus && !quality && (
+        {/* Status text */}
+        {captureStatus && (
           <p style={{ margin: '0 0 12px', fontSize: '13px', textAlign: 'center',
-            color: capturedDescriptor ? '#15803d' : '#92400e' }}>{captureStatus}</p>
+            color: capturedDescriptor ? '#15803d' : '#ef4444' }}>{captureStatus}</p>
         )}
 
         <div style={{ display: 'flex', gap: '10px', marginTop: quality ? '12px' : '0' }}>
-          <button onClick={captureDescriptor} disabled={capturing || !modelsLoaded}
+          <button onClick={captureDescriptor} disabled={capturing}
             style={{ flex: 1, padding: '12px', borderRadius: '10px',
               border: '1px solid var(--md-sys-color-outline)',
               background: 'transparent', cursor: 'pointer', fontWeight: 600, fontSize: '14px',
@@ -197,7 +226,7 @@ const RegisterFaceModal = ({ onClose, onSuccess }: Props) => {
             <Camera size={16} />
             {capturing ? 'Capturing...' : capturedDescriptor ? 'Recapture' : 'Capture Face'}
           </button>
-          <button onClick={() => register.mutate()} disabled={!canSubmit}
+          <button onClick={() => register.mutate(undefined)} disabled={!canSubmit}
             style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none',
               background: canSubmit ? 'var(--md-sys-color-primary)' : '#ccc',
               color: '#fff', cursor: canSubmit ? 'pointer' : 'not-allowed',

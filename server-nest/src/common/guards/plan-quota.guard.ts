@@ -3,7 +3,7 @@ import {
   CanActivate,
   ExecutionContext,
   ForbiddenException,
-} from '@nestjs/core';
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PLAN_KEY, Plan } from '../decorators/roles.decorator.js';
 
