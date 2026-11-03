@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  workflow_dispatch:
 
 jobs:
   # ── Backend: Lint + Test + Build ──────────────────────────────────────────
@@ -42,6 +43,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
+        continue-on-error: true
         with:
           files: ./server-nest/coverage/coverage-final.json
           flags: backend
@@ -83,6 +85,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
+        continue-on-error: true
         with:
           files: ./coverage/coverage-final.json
           flags: frontend
@@ -93,7 +96,9 @@ jobs:
     name: Build Backend Docker Image
     runs-on: ubuntu-latest
     needs: [backend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.DOCKER_USERNAME != ''
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      HAS_DOCKER_CREDS: ${{ secrets.DOCKER_USERNAME != '' && secrets.DOCKER_PASSWORD != '' }}
 
     steps:
       - name: Checkout code
@@ -103,6 +108,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
+        if: env.HAS_DOCKER_CREDS == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
@@ -113,11 +119,8 @@ jobs:
         with:
           context: ./server-nest
           file: ./server-nest/Dockerfile
-          push: true
-          tags: |
-            ${{ secrets.DOCKER_USERNAME }}/facialio-server:latest
-            ${{ secrets.DOCKER_USERNAME }}/facialio-server:${{ github.sha }}
-          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/facialio-server:latest
+          push: ${{ env.HAS_DOCKER_CREDS == 'true' }}
+          tags: ${{ env.HAS_DOCKER_CREDS == 'true' && format('{0}/facialio-server:latest,{0}/facialio-server:{1}', secrets.DOCKER_USERNAME, github.sha) || 'facialio-server:latest' }}
           cache-to: type=inline
 
   # ── Docker Build (Frontend) ───────────────────────────────────────────────
@@ -125,7 +128,9 @@ jobs:
     name: Build Frontend Docker Image
     runs-on: ubuntu-latest
     needs: [frontend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.DOCKER_USERNAME != ''
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      HAS_DOCKER_CREDS: ${{ secrets.DOCKER_USERNAME != '' && secrets.DOCKER_PASSWORD != '' }}
 
     steps:
       - name: Checkout code
@@ -135,6 +140,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
+        if: env.HAS_DOCKER_CREDS == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
@@ -145,11 +151,8 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          push: true
-          tags: |
-            ${{ secrets.DOCKER_USERNAME }}/facialio-client:latest
-            ${{ secrets.DOCKER_USERNAME }}/facialio-client:${{ github.sha }}
-          cache-from: type=registry,ref=${{ secrets.DOCKER_USERNAME }}/facialio-client:latest
+          push: ${{ env.HAS_DOCKER_CREDS == 'true' }}
+          tags: ${{ env.HAS_DOCKER_CREDS == 'true' && format('{0}/facialio-client:latest,{0}/facialio-client:{1}', secrets.DOCKER_USERNAME, github.sha) || 'facialio-client:latest' }}
           cache-to: type=inline
           build-args: |
             VITE_CLERK_PUBLISHABLE_KEY=${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
@@ -160,7 +163,7 @@ jobs:
     name: Deploy to Kubernetes
     runs-on: ubuntu-latest
     needs: [docker-backend, docker-frontend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.KUBE_CONFIG != ''
+    if: github.event_name == 'workflow_dispatch'
     environment: production
 
     steps:
@@ -183,6 +186,7 @@ jobs:
       - name: Wait for rollout
         run: |
           kubectl rollout status deployment/facialio-server -n facialio --timeout=5m
+          kubectl rollout status deployment/facialio-client -n facialio --timeout=5m
           kubectl rollout status deployment/facialio-client -n facialio --timeout=5m
 
       - name: Verify deployment
