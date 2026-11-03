@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { FaceRecognitionService } from './face-recognition.service.js';
+import { EmployeesService } from '../employees/employees.service.js';
 import { ServiceUnavailableException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
@@ -9,37 +10,44 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
  *
  * Tests cover:
  * - Face matching with Pinecone vector search
- * - Upserting face vectors
+ * - Upserting face vectors into org namespace
  * - Deleting face vectors
- * - Bulk operations
- * - Error handling when Pinecone not configured
+ * - Bulk operations (deleteAllVectorsForOrg)
+ * - Error handling when Pinecone is not configured (assertReady)
  * - Confidence threshold filtering
  */
 describe('FaceRecognitionService', () => {
   let service: FaceRecognitionService;
-  let configService: ConfigService;
   let mockPineconeIndex: any;
+  let mockEmployeesService: any;
+  let mockConfigService: any;
 
-  const mockDescriptor = new Array(128).fill(0.1);
+  const mockDescriptor = Array.from({ length: 128 }, () => 0.1);
   const mockOrgId = 'org_123';
   const mockEmployeeId = 'emp_507f1f77bcf86cd799439011';
 
   beforeEach(async () => {
-    // Mock Pinecone index
-    mockPineconeIndex = {
+    // Mock Pinecone namespace & index
+    const mockNamespace = {
       query: vi.fn(),
-      upsert: vi.fn(),
-      deleteOne: vi.fn(),
-      deleteMany: vi.fn(),
-      namespace: vi.fn().mockReturnThis(),
+      upsert: vi.fn().mockResolvedValue({}),
+      deleteOne: vi.fn().mockResolvedValue({}),
+      deleteAll: vi.fn().mockResolvedValue({}),
     };
 
-    // Mock ConfigService
-    const mockConfigService = {
+    mockPineconeIndex = {
+      namespace: vi.fn().mockReturnValue(mockNamespace),
+    };
+
+    mockEmployeesService = {
+      setPineconeId: vi.fn().mockResolvedValue(undefined),
+      findAllWithDescriptors: vi.fn().mockResolvedValue([]),
+    };
+
+    mockConfigService = {
       get: vi.fn((key: string) => {
         if (key === 'PINECONE_API_KEY') return 'test-api-key';
         if (key === 'PINECONE_INDEX_NAME') return 'test-index';
-        if (key === 'PINECONE_ENVIRONMENT') return 'test-env';
         return null;
       }),
     };
@@ -51,14 +59,18 @@ describe('FaceRecognitionService', () => {
           provide: ConfigService,
           useValue: mockConfigService,
         },
+        {
+          provide: EmployeesService,
+          useValue: mockEmployeesService,
+        },
       ],
     }).compile();
 
     service = module.get<FaceRecognitionService>(FaceRecognitionService);
-    configService = module.get<ConfigService>(ConfigService);
 
-    // Inject mock Pinecone index (simulate private field access for testing)
-    (service as any).pineconeIndex = mockPineconeIndex;
+    // Mock internal Pinecone index state
+    (service as any).index = mockPineconeIndex;
+    (service as any).isReady = true;
   });
 
   describe('matchFace', () => {
@@ -66,20 +78,21 @@ describe('FaceRecognitionService', () => {
       const mockQueryResult = {
         matches: [
           {
-            id: mockEmployeeId,
+            id: `${mockOrgId}#${mockEmployeeId}`,
             score: 0.95,
             metadata: {
               name: 'John Doe',
-              email: 'john@example.com',
+              employeeId: mockEmployeeId,
+              orgId: mockOrgId,
             },
           },
         ],
       };
 
-      mockPineconeIndex.namespace.mockReturnThis();
-      mockPineconeIndex.query.mockResolvedValueOnce(mockQueryResult);
+      const ns = mockPineconeIndex.namespace();
+      ns.query.mockResolvedValueOnce(mockQueryResult);
 
-      const result = await service.matchFace(mockOrgId, mockDescriptor, 0.85);
+      const result = await service.matchFace(mockOrgId, mockDescriptor, 0.75);
 
       expect(result.matched).toBe(true);
       expect(result.employeeId).toBe(mockEmployeeId);
@@ -92,149 +105,159 @@ describe('FaceRecognitionService', () => {
       const mockQueryResult = {
         matches: [
           {
-            id: mockEmployeeId,
-            score: 0.70,
-            metadata: { name: 'John Doe', email: 'john@example.com' },
+            id: `${mockOrgId}#${mockEmployeeId}`,
+            score: 0.60,
+            metadata: {
+              name: 'John Doe',
+              employeeId: mockEmployeeId,
+              orgId: mockOrgId,
+            },
           },
         ],
       };
 
-      mockPineconeIndex.namespace.mockReturnThis();
-      mockPineconeIndex.query.mockResolvedValueOnce(mockQueryResult);
+      const ns = mockPineconeIndex.namespace();
+      ns.query.mockResolvedValueOnce(mockQueryResult);
 
-      const result = await service.matchFace(mockOrgId, mockDescriptor, 0.85);
+      const result = await service.matchFace(mockOrgId, mockDescriptor, 0.75);
 
       expect(result.matched).toBe(false);
       expect(result.employeeId).toBeNull();
-      expect(result.confidence).toBe(0.70);
+      expect(result.confidence).toBe(0.60);
+      expect(result.message).toContain('Face not recognized');
     });
 
     it('should return not matched when no results from Pinecone', async () => {
       const mockQueryResult = { matches: [] };
 
-      mockPineconeIndex.namespace.mockReturnThis();
-      mockPineconeIndex.query.mockResolvedValueOnce(mockQueryResult);
+      const ns = mockPineconeIndex.namespace();
+      ns.query.mockResolvedValueOnce(mockQueryResult);
 
       const result = await service.matchFace(mockOrgId, mockDescriptor);
 
       expect(result.matched).toBe(false);
       expect(result.employeeId).toBeNull();
-      expect(result.message).toContain('No match found');
+      expect(result.message).toContain('No enrolled faces found');
     });
 
-    it('should use default threshold of 0.85 if not provided', async () => {
+    it('should use default threshold of 0.75 if not provided', async () => {
       const mockQueryResult = {
         matches: [
           {
-            id: mockEmployeeId,
-            score: 0.90,
-            metadata: { name: 'John Doe', email: 'john@example.com' },
+            id: `${mockOrgId}#${mockEmployeeId}`,
+            score: 0.80,
+            metadata: {
+              name: 'John Doe',
+              employeeId: mockEmployeeId,
+              orgId: mockOrgId,
+            },
           },
         ],
       };
 
-      mockPineconeIndex.namespace.mockReturnThis();
-      mockPineconeIndex.query.mockResolvedValueOnce(mockQueryResult);
+      const ns = mockPineconeIndex.namespace();
+      ns.query.mockResolvedValueOnce(mockQueryResult);
 
       const result = await service.matchFace(mockOrgId, mockDescriptor);
 
       expect(result.matched).toBe(true);
+      expect(result.confidence).toBe(0.80);
     });
 
     it('should throw ServiceUnavailableException if Pinecone not configured', async () => {
-      const serviceWithoutPinecone = new FaceRecognitionService(configService);
+      (service as any).isReady = false;
+      (service as any).index = null;
 
       await expect(
-        serviceWithoutPinecone.matchFace(mockOrgId, mockDescriptor),
+        service.matchFace(mockOrgId, mockDescriptor),
       ).rejects.toThrow(ServiceUnavailableException);
     });
   });
 
-  describe('upsertFaceVector', () => {
-    it('should upsert face vector with metadata', async () => {
-      mockPineconeIndex.namespace.mockReturnThis();
-      mockPineconeIndex.upsert.mockResolvedValueOnce({ upsertedCount: 1 });
+  describe('upsertVector', () => {
+    it('should upsert face vector into org namespace and set pineconeId in DB', async () => {
+      const ns = mockPineconeIndex.namespace();
 
-      const metadata = { name: 'John Doe', email: 'john@example.com' };
-      const result = await service.upsertFaceVector(
+      await service.upsertVector(
         mockOrgId,
         mockEmployeeId,
+        'John Doe',
         mockDescriptor,
-        metadata,
       );
 
-      expect(result.success).toBe(true);
-      expect(result.pineconeId).toBe(mockEmployeeId);
       expect(mockPineconeIndex.namespace).toHaveBeenCalledWith(`org_${mockOrgId}`);
-      expect(mockPineconeIndex.upsert).toHaveBeenCalledWith([
-        {
-          id: mockEmployeeId,
-          values: mockDescriptor,
-          metadata,
-        },
-      ]);
+      expect(ns.upsert).toHaveBeenCalledWith({
+        records: [
+          {
+            id: `${mockOrgId}#${mockEmployeeId}`,
+            values: mockDescriptor,
+            metadata: {
+              orgId: mockOrgId,
+              employeeId: mockEmployeeId,
+              name: 'John Doe',
+            },
+          },
+        ],
+      });
+      expect(mockEmployeesService.setPineconeId).toHaveBeenCalledWith(
+        mockOrgId,
+        mockEmployeeId,
+        `${mockOrgId}#${mockEmployeeId}`,
+      );
     });
 
     it('should throw ServiceUnavailableException if Pinecone not configured', async () => {
-      const serviceWithoutPinecone = new FaceRecognitionService(configService);
+      (service as any).isReady = false;
+      (service as any).index = null;
 
       await expect(
-        serviceWithoutPinecone.upsertFaceVector(
+        service.upsertVector(
           mockOrgId,
           mockEmployeeId,
+          'John Doe',
           mockDescriptor,
         ),
       ).rejects.toThrow(ServiceUnavailableException);
     });
   });
 
-  describe('deleteFaceVector', () => {
-    it('should delete a single face vector', async () => {
-      mockPineconeIndex.namespace.mockReturnThis();
-      mockPineconeIndex.deleteOne.mockResolvedValueOnce({});
+  describe('deleteVector', () => {
+    it('should delete a single face vector by composite id', async () => {
+      const ns = mockPineconeIndex.namespace();
 
-      const result = await service.deleteFaceVector(mockOrgId, mockEmployeeId);
+      await service.deleteVector(mockOrgId, mockEmployeeId);
 
-      expect(result.success).toBe(true);
       expect(mockPineconeIndex.namespace).toHaveBeenCalledWith(`org_${mockOrgId}`);
-      expect(mockPineconeIndex.deleteOne).toHaveBeenCalledWith(mockEmployeeId);
+      expect(ns.deleteOne).toHaveBeenCalledWith({ id: `${mockOrgId}#${mockEmployeeId}` });
     });
 
     it('should throw ServiceUnavailableException if Pinecone not configured', async () => {
-      const serviceWithoutPinecone = new FaceRecognitionService(configService);
+      (service as any).isReady = false;
+      (service as any).index = null;
 
       await expect(
-        serviceWithoutPinecone.deleteFaceVector(mockOrgId, mockEmployeeId),
+        service.deleteVector(mockOrgId, mockEmployeeId),
       ).rejects.toThrow(ServiceUnavailableException);
     });
   });
 
   describe('deleteAllVectorsForOrg', () => {
     it('should delete all vectors for an organization', async () => {
-      mockPineconeIndex.namespace.mockReturnThis();
-      mockPineconeIndex.deleteMany.mockResolvedValueOnce({});
+      const ns = mockPineconeIndex.namespace();
 
-      const result = await service.deleteAllVectorsForOrg(mockOrgId);
+      await service.deleteAllVectorsForOrg(mockOrgId);
 
-      expect(result.success).toBe(true);
       expect(mockPineconeIndex.namespace).toHaveBeenCalledWith(`org_${mockOrgId}`);
-      expect(mockPineconeIndex.deleteMany).toHaveBeenCalled();
-    });
-  });
-
-  describe('health check', () => {
-    it('should return connected status when Pinecone configured', () => {
-      const health = service.getHealth();
-
-      expect(health.connected).toBe(true);
-      expect(health.indexName).toBe('test-index');
+      expect(ns.deleteAll).toHaveBeenCalled();
     });
 
-    it('should return disconnected status when Pinecone not configured', () => {
-      const serviceWithoutPinecone = new FaceRecognitionService(configService);
-      const health = serviceWithoutPinecone.getHealth();
+    it('should throw ServiceUnavailableException if Pinecone not configured', async () => {
+      (service as any).isReady = false;
+      (service as any).index = null;
 
-      expect(health.connected).toBe(false);
+      await expect(
+        service.deleteAllVectorsForOrg(mockOrgId),
+      ).rejects.toThrow(ServiceUnavailableException);
     });
   });
 });

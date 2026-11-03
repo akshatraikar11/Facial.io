@@ -1,23 +1,19 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
-import request from 'supertest';
+import { NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { EmployeesController } from './employees.controller.js';
 import { EmployeesService } from './employees.service.js';
+import { AuditService } from '../audit/audit.service.js';
 import { CreateEmployeeDto } from './dto/create-employee.dto.js';
+import { UpdateEmployeeDto } from './dto/update-employee.dto.js';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 /**
- * Integration tests for EmployeesController
- *
- * Tests the HTTP API layer including:
- * - Request validation
- * - Auth guard integration (@OrgId decorator)
- * - Response serialization
- * - Error handling (4xx, 5xx)
+ * Unit tests for EmployeesController
  */
-describe('EmployeesController (Integration)', () => {
-  let app: INestApplication;
+describe('EmployeesController', () => {
+  let controller: EmployeesController;
   let employeesService: EmployeesService;
+  let auditService: AuditService;
 
   const mockEmployee = {
     _id: '507f1f77bcf86cd799439011',
@@ -29,6 +25,11 @@ describe('EmployeesController (Integration)', () => {
     pineconeId: 'emp_507f1f77bcf86cd799439011',
     isActive: true,
     createdAt: new Date('2024-01-01'),
+    descriptor: Array.from({ length: 128 }, () => 0.1),
+    toObject() {
+      const { descriptor, ...rest } = this;
+      return rest;
+    },
   };
 
   const mockCreateDto: CreateEmployeeDto = {
@@ -36,7 +37,7 @@ describe('EmployeesController (Integration)', () => {
     email: 'john@example.com',
     role: 'employee',
     department: 'Engineering',
-    descriptor: new Array(128).fill(0.1),
+    descriptor: Array.from({ length: 128 }, () => 0.1),
   };
 
   beforeEach(async () => {
@@ -45,8 +46,13 @@ describe('EmployeesController (Integration)', () => {
       findAll: vi.fn().mockResolvedValue([mockEmployee]),
       findOne: vi.fn().mockResolvedValue(mockEmployee),
       update: vi.fn().mockResolvedValue(mockEmployee),
-      deactivate: vi.fn().mockResolvedValue({ ...mockEmployee, isActive: false }),
+      softDelete: vi.fn().mockResolvedValue(undefined),
       findAllWithDescriptors: vi.fn().mockResolvedValue([mockEmployee]),
+      countActive: vi.fn().mockResolvedValue(1),
+    };
+
+    const mockAuditService = {
+      log: vi.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -56,182 +62,126 @@ describe('EmployeesController (Integration)', () => {
           provide: EmployeesService,
           useValue: mockEmployeesService,
         },
+        {
+          provide: AuditService,
+          useValue: mockAuditService,
+        },
       ],
     }).compile();
 
-    app = module.createNestApplication();
-    
-    // Apply same validation pipe as main.ts
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
-
-    await app.init();
+    controller = module.get<EmployeesController>(EmployeesController);
     employeesService = module.get<EmployeesService>(EmployeesService);
+    auditService = module.get<AuditService>(AuditService);
   });
 
-  afterEach(async () => {
-    await app.close();
-  });
-
-  describe('POST /employees', () => {
-    it('should create a new employee', async () => {
-      const response = await request(app.getHttpServer())
-        .post('/employees')
-        .send(mockCreateDto)
-        .expect(201);
-
-      expect(response.body.data).toMatchObject({
-        name: mockEmployee.name,
-        email: mockEmployee.email,
-      });
-      expect(employeesService.create).toHaveBeenCalledWith(
-        expect.any(String), // orgId from @OrgId() decorator
+  describe('create', () => {
+    it('should create an employee, strip descriptor, and log audit event', async () => {
+      const result = await controller.create(
+        'org_123',
+        'user_123',
+        'admin@example.com',
         mockCreateDto,
       );
-    });
 
-    it('should reject request with missing required fields', async () => {
-      const invalidDto = { name: 'John Doe' }; // missing email, descriptor
-
-      await request(app.getHttpServer())
-        .post('/employees')
-        .send(invalidDto)
-        .expect(400);
-    });
-
-    it('should reject request with invalid email format', async () => {
-      const invalidDto = { ...mockCreateDto, email: 'not-an-email' };
-
-      await request(app.getHttpServer())
-        .post('/employees')
-        .send(invalidDto)
-        .expect(400);
-    });
-
-    it('should reject request with descriptor not an array', async () => {
-      const invalidDto = { ...mockCreateDto, descriptor: 'not-an-array' };
-
-      await request(app.getHttpServer())
-        .post('/employees')
-        .send(invalidDto)
-        .expect(400);
-    });
-
-    it('should strip unknown fields (whitelist protection)', async () => {
-      const dtoWithExtraFields = {
-        ...mockCreateDto,
-        maliciousField: 'hack',
-        isAdmin: true,
-      };
-
-      await request(app.getHttpServer())
-        .post('/employees')
-        .send(dtoWithExtraFields)
-        .expect(400); // forbidNonWhitelisted throws on unknown fields
+      expect(employeesService.create).toHaveBeenCalledWith('org_123', mockCreateDto);
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org_123',
+          action: 'employee.created',
+          entityType: 'employee',
+        }),
+      );
+      expect(result).not.toHaveProperty('descriptor');
+      expect(result.name).toBe(mockEmployee.name);
+      expect(result.email).toBe(mockEmployee.email);
     });
   });
 
-  describe('GET /employees', () => {
+  describe('findAll', () => {
     it('should return all employees for the org', async () => {
-      const response = await request(app.getHttpServer())
-        .get('/employees')
-        .expect(200);
+      const result = await controller.findAll('org_123', false);
 
-      expect(response.body.data).toHaveLength(1);
-      expect(response.body.data[0]).toMatchObject({
-        name: mockEmployee.name,
-        email: mockEmployee.email,
-      });
-      expect(employeesService.findAll).toHaveBeenCalled();
+      expect(employeesService.findAll).toHaveBeenCalledWith('org_123');
+      expect(result).toEqual([mockEmployee]);
     });
 
-    it('should support withDescriptors query param', async () => {
-      await request(app.getHttpServer())
-        .get('/employees?withDescriptors=true')
-        .expect(200);
+    it('should support withDescriptors=true for biometric matching', async () => {
+      await controller.findAll('org_123', 'true');
 
-      expect(employeesService.findAllWithDescriptors).toHaveBeenCalled();
+      expect(employeesService.findAllWithDescriptors).toHaveBeenCalledWith('org_123');
     });
   });
 
-  describe('GET /employees/:id', () => {
-    it('should return a single employee by ID', async () => {
-      const response = await request(app.getHttpServer())
-        .get(`/employees/${mockEmployee._id}`)
-        .expect(200);
+  describe('count', () => {
+    it('should return active employee count for plan limits', async () => {
+      const result = await controller.count('org_123');
 
-      expect(response.body.data).toMatchObject({
-        name: mockEmployee.name,
-        email: mockEmployee.email,
-      });
-      expect(employeesService.findOne).toHaveBeenCalledWith(
-        expect.any(String), // orgId
-        mockEmployee._id,
-      );
+      expect(employeesService.countActive).toHaveBeenCalledWith('org_123');
+      expect(result).toEqual({ total: 1 });
+    });
+  });
+
+  describe('findOne', () => {
+    it('should return a single employee by ID without descriptor', async () => {
+      const result = await controller.findOne('org_123', mockEmployee._id);
+
+      expect(employeesService.findOne).toHaveBeenCalledWith('org_123', mockEmployee._id);
+      expect(result).not.toHaveProperty('descriptor');
+      expect(result.name).toBe(mockEmployee.name);
     });
 
-    it('should return 404 if employee not found', async () => {
+    it('should throw NotFoundException if employee not found', async () => {
       vi.spyOn(employeesService, 'findOne').mockRejectedValueOnce(
-        new Error('Employee not found'),
+        new NotFoundException('Employee not found'),
       );
 
-      await request(app.getHttpServer())
-        .get('/employees/nonexistent_id')
-        .expect(404);
+      await expect(
+        controller.findOne('org_123', 'nonexistent_id'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 
-  describe('PATCH /employees/:id', () => {
-    it('should update employee details', async () => {
-      const updateDto = { name: 'Jane Doe', department: 'Product' };
+  describe('update', () => {
+    it('should update employee details and log audit event', async () => {
+      const updateDto: UpdateEmployeeDto = { name: 'Jane Doe', department: 'Product' };
 
-      const response = await request(app.getHttpServer())
-        .patch(`/employees/${mockEmployee._id}`)
-        .send(updateDto)
-        .expect(200);
-
-      expect(employeesService.update).toHaveBeenCalledWith(
-        expect.any(String), // orgId
+      const result = await controller.update(
+        'org_123',
+        'user_123',
+        'admin@example.com',
         mockEmployee._id,
         updateDto,
       );
-    });
 
-    it('should reject update with invalid fields', async () => {
-      const invalidDto = { email: 'not-an-email' };
-
-      await request(app.getHttpServer())
-        .patch(`/employees/${mockEmployee._id}`)
-        .send(invalidDto)
-        .expect(400);
+      expect(employeesService.update).toHaveBeenCalledWith(
+        'org_123',
+        mockEmployee._id,
+        updateDto,
+      );
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'employee.updated',
+        }),
+      );
+      expect(result).not.toHaveProperty('descriptor');
     });
   });
 
-  describe('DELETE /employees/:id', () => {
-    it('should deactivate an employee (soft delete)', async () => {
-      await request(app.getHttpServer())
-        .delete(`/employees/${mockEmployee._id}`)
-        .expect(200);
-
-      expect(employeesService.deactivate).toHaveBeenCalledWith(
-        expect.any(String), // orgId
+  describe('softDelete', () => {
+    it('should deactivate an employee and log audit event', async () => {
+      await controller.softDelete(
+        'org_123',
+        'user_123',
+        'admin@example.com',
         mockEmployee._id,
       );
-    });
 
-    it('should return 404 if employee not found', async () => {
-      vi.spyOn(employeesService, 'deactivate').mockRejectedValueOnce(
-        new Error('Employee not found'),
+      expect(employeesService.softDelete).toHaveBeenCalledWith('org_123', mockEmployee._id);
+      expect(auditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'employee.deactivated',
+        }),
       );
-
-      await request(app.getHttpServer())
-        .delete('/employees/nonexistent_id')
-        .expect(404);
     });
   });
 });

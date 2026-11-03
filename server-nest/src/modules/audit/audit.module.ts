@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuditController } from './audit.controller.js';
 import { AuditService } from './audit.service.js';
+import { S3AuditStorageService } from './s3-audit-storage.service.js';
 import { AuditLog, AuditLogSchema } from './schemas/audit-log.schema.js';
 
 /**
@@ -22,7 +23,7 @@ import { AuditLog, AuditLogSchema } from './schemas/audit-log.schema.js';
     ]),
   ],
   controllers: [AuditController],
-  providers: [AuditService],
-  exports: [AuditService],
+  providers: [AuditService, S3AuditStorageService],
+  exports: [AuditService, S3AuditStorageService],
 })
 export class AuditModule {}

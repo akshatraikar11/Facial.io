@@ -53,3 +53,21 @@ k8s/*.local.yaml
 *.pem
 *.key
 *.cert
+
+node_modules/
+**/node_modules/
+server/node_modules/
+server-nest/node_modules/
+client/node_modules/
+dist/
+**/dist/
+server/dist/
+server-nest/dist/
+client/dist/
+**/.env
+server/.env
+client/.env
+
+# Ignore deprecated Express server prototype
+/server/
+server/

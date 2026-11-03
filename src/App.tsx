@@ -1,10 +1,11 @@
-import React, { lazy, Suspense } from 'react';
+import React, { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { ClerkProvider } from '@clerk/clerk-react';
+import { ClerkProvider, useAuth } from '@clerk/clerk-react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import * as Sentry from '@sentry/react';
 import { queryClient } from './services/queryClient';
+import { setAuthToken } from './services/api';
 import { FaceApiProvider, useFaceApi } from './components/FaceApiContext';
 import SplashScreen from './components/SplashScreen';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -76,16 +77,35 @@ const AppRoutes = () => (
   </BrowserRouter>
 );
 
+/** Keeps the in-memory auth token in sync with the Clerk session. */
+const ClerkTokenSync = () => {
+  const { getToken, isSignedIn, isLoaded } = useAuth();
+  useEffect(() => {
+    if (!isLoaded) return; // still initializing — don't touch the token yet
+    if (!isSignedIn) { setAuthToken(null); return; }
+    // Get immediately, then refresh every 55 s (Clerk tokens expire in 60 s)
+    const refresh = async () => {
+      const token = await getToken();
+      setAuthToken(token);
+    };
+    refresh();
+    const id = setInterval(refresh, 55_000);
+    return () => clearInterval(id);
+  }, [isLoaded, isSignedIn, getToken]);
+  return null;
+};
+
 /** Gates the entire app behind the splash screen while face-api models load */
 const AppGate = () => {
-  const { loading, error } = useFaceApi();
-  if (loading || error) return <SplashScreen error={error} />;
+  const { loading, error, retry } = useFaceApi();
+  if (loading || error) return <SplashScreen error={error} onRetry={retry} />;
   return <AppRoutes />;
 };
 
 const App = () => (
   <ErrorBoundary>
     <ClerkProvider publishableKey={CLERK_KEY} fallbackRedirectUrl="/dashboard">
+      <ClerkTokenSync />
       <QueryClientProvider client={queryClient}>
         <FaceApiProvider>
           <AppGate />

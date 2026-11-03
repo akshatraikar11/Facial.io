@@ -2,7 +2,6 @@ import {
   Controller,
   Post,
   Get,
-  Body,
   Headers,
   Req,
   HttpCode,
@@ -13,7 +12,7 @@ import {
 import type { RawBodyRequest } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { Webhook, WebhookVerificationError } from 'svix';
+import { Webhook } from 'svix';
 import { Request } from 'express';
 import { OrganizationsService } from './organizations.service.js';
 import { Public } from '../auth/decorators/public.decorator.js';

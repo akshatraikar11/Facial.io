@@ -3,7 +3,6 @@ import {
   Logger,
   OnModuleInit,
   ServiceUnavailableException,
-  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pinecone } from '@pinecone-database/pinecone';

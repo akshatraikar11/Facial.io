@@ -21,6 +21,8 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { LocationsModule } from './modules/locations/locations.module.js';
 import { ShiftsModule } from './modules/shifts/shifts.module.js';
 import { AuditModule } from './modules/audit/audit.module.js';
+import { MetricsModule } from './modules/metrics/metrics.module.js';
+import { TenantIsolationGuard } from './common/guards/tenant-isolation.guard.js';
 
 /**
  * AppModule — the root module of the entire NestJS application.
@@ -103,6 +105,7 @@ import { AuditModule } from './modules/audit/audit.module.js';
     LocationsModule,
     ShiftsModule,
     AuditModule,
+    MetricsModule,
   ],
   providers: [
     // Apply ThrottlerGuard globally to all routes

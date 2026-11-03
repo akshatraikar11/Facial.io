@@ -4,6 +4,8 @@
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/akshatraikar11/Facial.io)
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/akshatraikar11/Facial.io)
+[![Tests](https://img.shields.io/badge/Vitest-40_Passing-brightgreen.svg)](https://vitest.dev/)
+[![NestJS](https://img.shields.io/badge/NestJS-12.x-E0234E.svg)](https://nestjs.com/)
 
 ---
 
@@ -50,8 +52,17 @@ The kiosk includes a challenge-response liveness check — the system asks the u
 ### 7. Payroll-ready Export
 Attendance data exports in formats compatible with standard payroll processing — daily/weekly/monthly summaries with present, late, and absent counts per employee. The data sitting in the system is actually useful.
 
-### 8. Offline Queue (Coming Soon)
-Check-ins queue locally when the connection drops and sync automatically when it restores. Hardware terminals have always had this. We're adding it in software.
+### 8. Offline-First Resilience (Dexie IndexedDB)
+Check-ins queue locally in IndexedDB when the kiosk loses connection, providing seamless offline biometric check-in. Once network connectivity restores, the queue automatically syncs atomically to the NestJS backend with exponential backoff.
+
+### 9. Multi-Tenant Row-Level Security & Isolation
+Custom `TenantIsolationGuard` inspects token claims and blocks any cross-tenant route parameters, query filters, or body payloads with HTTP 403 Forbidden. Pinecone vectors are segregated in isolated organization namespaces (`org_<id>`).
+
+### 10. AWS S3 Presigned URLs for Biometric Audit Trails
+Low-resolution face verification audit frames and failed liveness captures are uploaded directly to private S3 buckets via 15-minute SigV4 presigned URLs, eliminating server memory buffers and adhering to GDPR isolation.
+
+### 11. Prometheus Metrics & Kubernetes HPA Scaling
+Custom `MetricsModule` exposes `/metrics` emitting RED metrics, vector matching latency histograms, and liveness challenge counters. Kubernetes HPA auto-scales pods between 2 and 5 replicas when biometric verification traffic surges.
 
 ---
 

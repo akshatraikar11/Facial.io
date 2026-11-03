@@ -30,6 +30,14 @@ spec:
         target:
           type: Utilization
           averageUtilization: 80
+    # Custom Prometheus Metric: Scale up when biometric verification rate exceeds 50/sec per pod
+    - type: Pods
+      pods:
+        metric:
+          name: facialio_face_verifications_per_second
+        target:
+          type: AverageValue
+          averageValue: "50"
 
   behavior:
     # Scale UP: fast — add pods quickly under load
