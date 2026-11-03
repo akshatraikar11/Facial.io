@@ -37,3 +37,4 @@ describe('S3AuditStorageService', () => {
     expect(downloadUrl).toContain('X-Amz-Signature=');
   });
 });
+

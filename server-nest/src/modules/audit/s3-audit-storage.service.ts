@@ -132,3 +132,4 @@ export class S3AuditStorageService {
     return `https://${host}/${s3Key}?${queryParams.toString()}`;
   }
 }
+

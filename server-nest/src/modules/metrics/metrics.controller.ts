@@ -27,3 +27,4 @@ export class MetricsController {
     res.send(this.metricsService.getMetrics());
   }
 }
+

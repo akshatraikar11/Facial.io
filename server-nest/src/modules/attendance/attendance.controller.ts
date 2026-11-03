@@ -9,6 +9,7 @@ import {
   HttpCode,
   HttpStatus,
   Res,
+  UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import {
@@ -26,6 +27,10 @@ import { Public } from '../auth/decorators/public.decorator.js';
 import { RequiresPlan } from '../../common/decorators/roles.decorator.js';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import { AuditService } from '../audit/audit.service.js';
+import {
+  KioskRateLimiterGuard,
+  KioskRateLimit,
+} from '../../common/guards/kiosk-rate-limiter.guard.js';
 
 /**
  * AttendanceController — REST API for attendance management.
@@ -68,16 +73,17 @@ export class AttendanceController {
    * POST /api/attendance/check-in
    * Kiosk check-in endpoint.
    * @Public() — the kiosk doesn't have a Clerk JWT.
-   *
-   * orgId comes from the DTO body here (not JWT) because kiosk is unauthenticated.
-   * Phase 4 will add a signed token from the face-recognition result to validate this.
+   * Rate limited: max 5 check-in attempts per 60s per device/IP via sliding window.
    */
   @Public()
+  @UseGuards(KioskRateLimiterGuard)
+  @KioskRateLimit({ limit: 5, windowSec: 60 })
   @Post('check-in')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Kiosk check-in — record attendance for an employee' })
   @ApiResponse({ status: 201, description: 'Check-in recorded' })
   @ApiResponse({ status: 409, description: 'Already checked in today' })
+  @ApiResponse({ status: 429, description: 'Kiosk rate limit exceeded' })
   @ApiResponse({ status: 404, description: 'Employee not found' })
   async checkIn(
     @Body() dto: CreateAttendanceDto & { orgId: string },

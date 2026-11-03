@@ -32,3 +32,4 @@ describe('MetricsService', () => {
     expect(output).toContain('facialio_liveness_challenges_total{challenge="blink",outcome="success"} 1');
   });
 });
+

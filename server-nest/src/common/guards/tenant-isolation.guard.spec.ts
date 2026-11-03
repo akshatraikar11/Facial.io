@@ -62,3 +62,4 @@ describe('TenantIsolationGuard', () => {
     expect(guard.canActivate(context)).toBe(true);
   });
 });
+

@@ -8,6 +8,7 @@ import { EmployeesModule } from '../employees/employees.module.js';
 import { LocationsModule } from '../locations/locations.module.js';
 import { ShiftsModule } from '../shifts/shifts.module.js';
 import { AuditModule } from '../audit/audit.module.js';
+import { KioskRateLimiterGuard } from '../../common/guards/kiosk-rate-limiter.guard.js';
 
 /**
  * AttendanceModule — owns the check-in flow, attendance data, and real-time events.
@@ -33,7 +34,7 @@ import { AuditModule } from '../audit/audit.module.js';
     AuditModule,
   ],
   controllers: [AttendanceController],
-  providers: [AttendanceService, AttendanceGateway],
-  exports: [AttendanceService, AttendanceGateway],
+  providers: [AttendanceService, AttendanceGateway, KioskRateLimiterGuard],
+  exports: [AttendanceService, AttendanceGateway, KioskRateLimiterGuard],
 })
 export class AttendanceModule {}
