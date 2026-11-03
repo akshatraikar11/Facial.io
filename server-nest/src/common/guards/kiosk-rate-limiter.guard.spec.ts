@@ -79,3 +79,4 @@ describe('KioskRateLimiterGuard', () => {
     expect(await guard.canActivate(contextB)).toBe(true);
   });
 });
+
